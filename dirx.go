@@ -1,25 +1,21 @@
-// Dirx utility recursivly gathers folder information by extension
-package main
+package dirx
 
 import (
-	"flag"
 	"fmt"
 	"io/ioutil"
 	"path"
 	"regexp"
 	"sync"
-	"time"
 )
 
-var (
-	extRx    = regexp.MustCompile(`.+\.([^.]+)$`)
-	hiddenRx = regexp.MustCompile(`^[.][^.]+$`)
-)
+type DirX struct {
+	SkipHidden  bool
+	FollowLinks bool
 
-var (
-	followFlag     = flag.Bool("l", false, "Follow links")
-	skipHiddenFlag = flag.Bool("h", true, "Skip hidden")
-)
+	fileChan chan File
+	dirChan  chan Dir
+	wg       *sync.WaitGroup
+}
 
 type Dir struct {
 	dirname string
@@ -29,20 +25,44 @@ type File struct {
 	filename string
 }
 
+var (
+	extRx    = regexp.MustCompile(`.+\.([^.]+)$`)
+	hiddenRx = regexp.MustCompile(`^[.][^.]+$`)
+)
+
+func NewDirX() *DirX {
+	return &DirX{
+		fileChan: make(chan File, 1),
+		dirChan:  make(chan Dir, 1),
+		wg:       &sync.WaitGroup{},
+	}
+}
+
+func (dx *DirX) Go(path string) error {
+	go grabFiles(dx.fileChan)
+
+	dx.wg.Add(1)
+	go dx.oneDir(Dir{dirname: path}, dx.dirChan, dx.fileChan, dx.wg)
+	go dx.recurseDir(dx.dirChan, dx.fileChan, dx.wg)
+
+	dx.wg.Wait()
+	return nil
+}
+
 func grabFiles(fileChan chan File) {
 	for f := range fileChan {
 		fmt.Printf("%q\n", f.filename)
 	}
 }
 
-func recurseDir(dirChan chan Dir, emit chan File, wg *sync.WaitGroup) {
+func (dx *DirX) recurseDir(dirChan chan Dir, emit chan File, wg *sync.WaitGroup) {
 	for dir := range dirChan {
 		wg.Add(1)
-		go oneDir(dir, dirChan, emit, wg)
+		go dx.oneDir(dir, dirChan, emit, wg)
 	}
 }
 
-func oneDir(dir Dir, dirChan chan Dir, emit chan File, wg *sync.WaitGroup) {
+func (dx *DirX) oneDir(dir Dir, dirChan chan Dir, emit chan File, wg *sync.WaitGroup) {
 	fmt.Printf("dir %q\n", dir.dirname)
 	files, err := ioutil.ReadDir(dir.dirname)
 	if err != nil {
@@ -54,7 +74,7 @@ func oneDir(dir Dir, dirChan chan Dir, emit chan File, wg *sync.WaitGroup) {
 		name := f.Name()
 		if f.IsDir() {
 			dirName := path.Join(dir.dirname, name)
-			if addFolder(dirName) {
+			if dx.addFolder(dirName) {
 				dirChan <- Dir{dirname: dirName}
 			}
 		}
@@ -62,40 +82,23 @@ func oneDir(dir Dir, dirChan chan Dir, emit chan File, wg *sync.WaitGroup) {
 	// Now emit the files
 	for _, f := range files {
 		name := f.Name()
-		if !f.IsDir() && addFile(name) {
+		if !f.IsDir() && dx.addFile(name) {
 			emit <- File{filename: name}
 		}
 	}
 	wg.Done()
 }
 
-func addFolder(name string) bool {
-	if !*skipHiddenFlag {
+func (dx *DirX) addFolder(name string) bool {
+	if !dx.SkipHidden {
 		return true
 	}
 	return !hiddenRx.MatchString(name)
 }
 
-func addFile(name string) bool {
-	if !*skipHiddenFlag {
+func (dx *DirX) addFile(name string) bool {
+	if !dx.SkipHidden {
 		return true
 	}
 	return !hiddenRx.MatchString(name)
-}
-
-func main() {
-	flag.Parse()
-
-	fileChan := make(chan File, 1)
-	dirChan := make(chan Dir, 1)
-	wg := &sync.WaitGroup{}
-
-	go grabFiles(fileChan)
-
-	wg.Add(1)
-	go oneDir(Dir{dirname: "/home/scott/20p"}, dirChan, fileChan, wg)
-	go recurseDir(dirChan, fileChan, wg)
-
-	wg.Wait()
-	time.Sleep(1 * time.Second)
 }
