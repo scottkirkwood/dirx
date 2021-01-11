@@ -18,7 +18,12 @@ func main() {
 	dirx := dirx.NewDirX()
 	dirx.SkipHidden = *skipHiddenFlag
 	dirx.FollowLinks = *followFlag
-	if err := dirx.Go("/home/scott/20p"); err != nil {
+	folder := "."
+	if len(flag.Args()) > 0 {
+		folder = flag.Arg(0)
+	}
+	if err := dirx.Go(folder); err != nil {
 		fmt.Printf("Error: %v\n", err)
 	}
+	dirx.Print()
 }
