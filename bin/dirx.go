@@ -4,7 +4,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"time"
 	dirx "github.com/scottkirkwood/dirx"
 )
 
@@ -26,6 +25,5 @@ func main() {
 	if err := dirx.Go(folder); err != nil {
 		fmt.Printf("Error: %v\n", err)
 	}
-	time.Sleep(time.Second)
 	dirx.Print()
 }

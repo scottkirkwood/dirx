@@ -15,10 +15,11 @@ type DirX struct {
 	SkipHidden  bool
 	FollowLinks bool
 
-	fileChan chan File
-	dirChan  chan Dir
-	wg       *sync.WaitGroup
-	stats    map[string]Stats
+	fileChan      chan File
+	dirChan       chan Dir
+	gatherFilesWg *sync.WaitGroup
+	fileWg        *sync.WaitGroup
+	stats         map[string]Stats
 }
 
 // Dir is just the relative directory name
@@ -50,30 +51,36 @@ var (
 // NewDirX creates a new empty DirX object
 func NewDirX() *DirX {
 	return &DirX{
-		fileChan: make(chan File, 1),
-		dirChan:  make(chan Dir, 1),
-		wg:       &sync.WaitGroup{},
-		stats:    make(map[string]Stats),
+		fileChan:      make(chan File, 1),
+		dirChan:       make(chan Dir, 1),
+		gatherFilesWg: &sync.WaitGroup{},
+		fileWg:        &sync.WaitGroup{},
+		stats:         make(map[string]Stats),
 	}
 }
 
 // Go starts the operation from a certain path
 func (dx *DirX) Go(path string) error {
+	dx.gatherFilesWg.Add(1)
 	go dx.gatherFiles(dx.fileChan)
 
-	dx.wg.Add(1)
-	go dx.oneDir(Dir{dirname: path}, dx.dirChan, dx.fileChan, dx.wg)
-	go dx.recurseDir(dx.dirChan, dx.fileChan, dx.wg)
+	dx.fileWg.Add(1)
+	go dx.oneDir(Dir{dirname: path})
 
-	dx.wg.Wait()
+	go dx.recurseDir()
+
+	dx.fileWg.Wait()
 	close(dx.dirChan)
 	close(dx.fileChan)
+	dx.gatherFilesWg.Wait()
 	return nil
 }
 
 // gatherFiles needs to run in a goroutine and gathers statistics
 // over files in the fileChan
 func (dx *DirX) gatherFiles(fileChan chan File) {
+	defer dx.gatherFilesWg.Done()
+
 	for f := range fileChan {
 		parts := extRx.FindStringSubmatch(f.filename)
 		if len(parts) != 2 {
@@ -102,16 +109,16 @@ func (dx *DirX) gatherFiles(fileChan chan File) {
 
 // recurseDir performs a breadth first search over the folders by using
 // the dirChan and should run in a goroutine
-func (dx *DirX) recurseDir(dirChan chan Dir, emit chan File, wg *sync.WaitGroup) {
-	for dir := range dirChan {
-		wg.Add(1)
-		go dx.oneDir(dir, dirChan, emit, wg)
+func (dx *DirX) recurseDir() {
+	for dir := range dx.dirChan {
+		dx.fileWg.Add(1)
+		go dx.oneDir(dir)
 	}
 }
 
 // oneDir emits File and Dir channels as it iterates over one directory
-func (dx *DirX) oneDir(dir Dir, dirChan chan Dir, emit chan File, wg *sync.WaitGroup) {
-	defer wg.Done()
+func (dx *DirX) oneDir(dir Dir) {
+	defer dx.fileWg.Done()
 
 	files, err := ioutil.ReadDir(dir.dirname)
 	if err != nil {
@@ -123,14 +130,14 @@ func (dx *DirX) oneDir(dir Dir, dirChan chan Dir, emit chan File, wg *sync.WaitG
 		name := f.Name()
 		if f.IsDir() && dx.addFolder(name) {
 			dirName := path.Join(dir.dirname, name)
-			dirChan <- Dir{dirname: dirName}
+			dx.dirChan <- Dir{dirname: dirName}
 		}
 	}
 	// Now emit the files
 	for _, f := range files {
 		name := f.Name()
 		if !f.IsDir() && dx.addFile(name) {
-			emit <- File{
+			dx.fileChan <- File{
 				filename: name,
 				size:     f.Size(),
 				time:     f.ModTime(),
