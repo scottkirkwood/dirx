@@ -10,6 +10,7 @@ import (
 	"time"
 )
 
+// DirX is the main structure to perform DirX operations
 type DirX struct {
 	SkipHidden  bool
 	FollowLinks bool
@@ -20,16 +21,19 @@ type DirX struct {
 	stats    map[string]Stats
 }
 
+// Dir is just the relative directory name
 type Dir struct {
 	dirname string
 }
 
+// File is the filename plus some other bits of data
 type File struct {
 	filename string
 	size     int64
 	time     time.Time
 }
 
+// Stats keeps track of extension statistics
 type Stats struct {
 	ext    string
 	count  int
@@ -43,6 +47,7 @@ var (
 	hiddenRx = regexp.MustCompile(`^[.][^.]+$`)
 )
 
+// NewDirX creates a new empty DirX object
 func NewDirX() *DirX {
 	return &DirX{
 		fileChan: make(chan File, 1),
@@ -52,6 +57,7 @@ func NewDirX() *DirX {
 	}
 }
 
+// Go starts the operation from a certain path
 func (dx *DirX) Go(path string) error {
 	go dx.gatherFiles(dx.fileChan)
 
@@ -60,9 +66,13 @@ func (dx *DirX) Go(path string) error {
 	go dx.recurseDir(dx.dirChan, dx.fileChan, dx.wg)
 
 	dx.wg.Wait()
+	close(dx.dirChan)
+	close(dx.fileChan)
 	return nil
 }
 
+// gatherFiles needs to run in a goroutine and gathers statistics
+// over files in the fileChan
 func (dx *DirX) gatherFiles(fileChan chan File) {
 	for f := range fileChan {
 		parts := extRx.FindStringSubmatch(f.filename)
@@ -90,6 +100,8 @@ func (dx *DirX) gatherFiles(fileChan chan File) {
 	}
 }
 
+// recurseDir performs a breadth first search over the folders by using
+// the dirChan and should run in a goroutine
 func (dx *DirX) recurseDir(dirChan chan Dir, emit chan File, wg *sync.WaitGroup) {
 	for dir := range dirChan {
 		wg.Add(1)
@@ -97,6 +109,7 @@ func (dx *DirX) recurseDir(dirChan chan Dir, emit chan File, wg *sync.WaitGroup)
 	}
 }
 
+// oneDir emits File and Dir channels as it iterates over one directory
 func (dx *DirX) oneDir(dir Dir, dirChan chan Dir, emit chan File, wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -108,11 +121,9 @@ func (dx *DirX) oneDir(dir Dir, dirChan chan Dir, emit chan File, wg *sync.WaitG
 	// Add all folders to dirChan
 	for _, f := range files {
 		name := f.Name()
-		if f.IsDir() {
+		if f.IsDir() && dx.addFolder(name) {
 			dirName := path.Join(dir.dirname, name)
-			if dx.addFolder(dirName) {
-				dirChan <- Dir{dirname: dirName}
-			}
+			dirChan <- Dir{dirname: dirName}
 		}
 	}
 	// Now emit the files
