@@ -6,6 +6,7 @@ import (
 	"path"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -51,8 +52,8 @@ var (
 // NewDirX creates a new empty DirX object
 func NewDirX() *DirX {
 	return &DirX{
-		fileChan:      make(chan File, 1),
-		dirChan:       make(chan Dir, 1),
+		fileChan:      make(chan File, 2),
+		dirChan:       make(chan Dir, 2),
 		gatherFilesWg: &sync.WaitGroup{},
 		fileWg:        &sync.WaitGroup{},
 		stats:         make(map[string]Stats),
@@ -65,13 +66,13 @@ func (dx *DirX) Go(path string) error {
 	go dx.gatherFiles(dx.fileChan)
 
 	dx.fileWg.Add(1)
-	go dx.oneDir(Dir{dirname: path})
-
+	dx.dirChan <- Dir{dirname: path}
 	go dx.recurseDir()
 
 	dx.fileWg.Wait()
-	close(dx.dirChan)
 	close(dx.fileChan)
+	close(dx.dirChan)
+
 	dx.gatherFilesWg.Wait()
 	return nil
 }
@@ -105,15 +106,19 @@ func (dx *DirX) gatherFiles(fileChan chan File) {
 		}
 		dx.stats[ext] = stats
 	}
+	fmt.Printf("Quitting gatherFiles\n")
 }
 
 // recurseDir performs a breadth first search over the folders by using
 // the dirChan and should run in a goroutine
 func (dx *DirX) recurseDir() {
+
 	for dir := range dx.dirChan {
 		dx.fileWg.Add(1)
 		go dx.oneDir(dir)
 	}
+	dx.fileWg.Done()
+	fmt.Printf("Quitting recurseDir\n")
 }
 
 // oneDir emits File and Dir channels as it iterates over one directory
@@ -122,18 +127,12 @@ func (dx *DirX) oneDir(dir Dir) {
 
 	files, err := ioutil.ReadDir(dir.dirname)
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+		if !strings.Contains(err.Error(), "permission denied") {
+			fmt.Printf("Error: %v\n", err)
+		}
 		return
 	}
-	// Add all folders to dirChan
-	for _, f := range files {
-		name := f.Name()
-		if f.IsDir() && dx.addFolder(name) {
-			dirName := path.Join(dir.dirname, name)
-			dx.dirChan <- Dir{dirname: dirName}
-		}
-	}
-	// Now emit the files
+	// Emit the files first
 	for _, f := range files {
 		name := f.Name()
 		if !f.IsDir() && dx.addFile(name) {
@@ -142,6 +141,14 @@ func (dx *DirX) oneDir(dir Dir) {
 				size:     f.Size(),
 				time:     f.ModTime(),
 			}
+		}
+	}
+	// Now emit the folders
+	for _, f := range files {
+		name := f.Name()
+		if f.IsDir() && dx.addFolder(name) {
+			dirName := path.Join(dir.dirname, name)
+			dx.dirChan <- Dir{dirname: dirName}
 		}
 	}
 }

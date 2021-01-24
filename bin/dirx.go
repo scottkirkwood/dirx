@@ -5,6 +5,9 @@ import (
 	"flag"
 	"fmt"
 	dirx "github.com/scottkirkwood/dirx"
+	"os"
+	"os/signal"
+	"syscall"
 )
 
 var (
@@ -15,6 +18,10 @@ var (
 func main() {
 	flag.Parse()
 
+	// Swallow the "signal: broken pipe" message
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, syscall.SIGPIPE)
+
 	dirx := dirx.NewDirX()
 	dirx.SkipHidden = *skipHiddenFlag
 	dirx.FollowLinks = *followFlag
@@ -22,6 +29,7 @@ func main() {
 	if len(flag.Args()) > 0 {
 		folder = flag.Arg(0)
 	}
+
 	if err := dirx.Go(folder); err != nil {
 		fmt.Printf("Error: %v\n", err)
 	}
