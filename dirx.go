@@ -52,7 +52,7 @@ var (
 // NewDirX creates a new empty DirX object
 func NewDirX() *DirX {
 	return &DirX{
-		fileChan:      make(chan File, 2),
+		fileChan:      make(chan File, 100),
 		dirChan:       make(chan Dir, 2),
 		gatherFilesWg: &sync.WaitGroup{},
 		fileWg:        &sync.WaitGroup{},
@@ -66,7 +66,7 @@ func (dx *DirX) Go(path string) error {
 	go dx.gatherFiles(dx.fileChan)
 
 	dx.fileWg.Add(1)
-	dx.dirChan <- Dir{dirname: path}
+	go dx.oneDir(Dir{dirname: path})
 	go dx.recurseDir()
 
 	dx.fileWg.Wait()
@@ -117,8 +117,6 @@ func (dx *DirX) recurseDir() {
 		dx.fileWg.Add(1)
 		go dx.oneDir(dir)
 	}
-	dx.fileWg.Done()
-	fmt.Printf("Quitting recurseDir\n")
 }
 
 // oneDir emits File and Dir channels as it iterates over one directory
