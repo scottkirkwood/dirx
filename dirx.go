@@ -52,8 +52,8 @@ var (
 // NewDirX creates a new empty DirX object
 func NewDirX() *DirX {
 	return &DirX{
-		fileChan:      make(chan File, 100),
-		dirChan:       make(chan Dir, 2),
+		fileChan:      make(chan File, 0),
+		dirChan:       make(chan Dir, 0),
 		gatherFilesWg: &sync.WaitGroup{},
 		fileWg:        &sync.WaitGroup{},
 		stats:         make(map[string]Stats),
@@ -65,9 +65,10 @@ func (dx *DirX) Go(path string) error {
 	dx.gatherFilesWg.Add(1)
 	go dx.gatherFiles(dx.fileChan)
 
-	dx.fileWg.Add(1)
-	go dx.oneDir(Dir{dirname: path})
 	go dx.recurseDir()
+
+	dx.fileWg.Add(1)
+	dx.oneDir(Dir{dirname: path})
 
 	dx.fileWg.Wait()
 	close(dx.fileChan)
@@ -106,15 +107,12 @@ func (dx *DirX) gatherFiles(fileChan chan File) {
 		}
 		dx.stats[ext] = stats
 	}
-	fmt.Printf("Quitting gatherFiles\n")
 }
 
 // recurseDir performs a breadth first search over the folders by using
 // the dirChan and should run in a goroutine
 func (dx *DirX) recurseDir() {
-
 	for dir := range dx.dirChan {
-		dx.fileWg.Add(1)
 		go dx.oneDir(dir)
 	}
 }
@@ -130,7 +128,16 @@ func (dx *DirX) oneDir(dir Dir) {
 		}
 		return
 	}
-	// Emit the files first
+	// Emit the folders
+	for _, f := range files {
+		name := f.Name()
+		if f.IsDir() && dx.addFolder(name) {
+			dirName := path.Join(dir.dirname, name)
+			dx.fileWg.Add(1)
+			dx.dirChan <- Dir{dirname: dirName}
+		}
+	}
+	// Emit the files
 	for _, f := range files {
 		name := f.Name()
 		if !f.IsDir() && dx.addFile(name) {
@@ -139,14 +146,6 @@ func (dx *DirX) oneDir(dir Dir) {
 				size:     f.Size(),
 				time:     f.ModTime(),
 			}
-		}
-	}
-	// Now emit the folders
-	for _, f := range files {
-		name := f.Name()
-		if f.IsDir() && dx.addFolder(name) {
-			dirName := path.Join(dir.dirname, name)
-			dx.dirChan <- Dir{dirname: dirName}
 		}
 	}
 }
@@ -176,6 +175,9 @@ func (dx *DirX) toArray() []Stats {
 func (dx *DirX) Print() {
 	sorted := dx.toArray()
 	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].count == sorted[j].count {
+			return sorted[i].ext < sorted[j].ext
+		}
 		return sorted[i].count > sorted[j].count
 	})
 	for _, stats := range sorted {
