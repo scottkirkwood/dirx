@@ -13,6 +13,7 @@ import (
 var (
 	followFlag     = flag.Bool("l", false, "Follow links")
 	skipHiddenFlag = flag.Bool("h", true, "Skip hidden")
+	showSingleNameFlag = flag.Bool("only", false, "Show full name if it's the only one")
 )
 
 func main() {
@@ -25,6 +26,7 @@ func main() {
 	dirx := dirx.NewDirX()
 	dirx.SkipHidden = *skipHiddenFlag
 	dirx.FollowLinks = *followFlag
+	dirx.ShowSingleName = *showSingleNameFlag
 	folder := "."
 	if len(flag.Args()) > 0 {
 		folder = flag.Arg(0)
@@ -33,5 +35,6 @@ func main() {
 	if err := dirx.Go(folder); err != nil {
 		fmt.Printf("Error: %v\n", err)
 	}
+	dirx.Sort()
 	dirx.Print()
 }

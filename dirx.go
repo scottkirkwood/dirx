@@ -13,14 +13,16 @@ import (
 
 // DirX is the main structure to perform DirX operations
 type DirX struct {
-	SkipHidden  bool
-	FollowLinks bool
+	SkipHidden     bool
+	FollowLinks    bool
+	ShowSingleName bool
 
 	fileChan      chan File
 	dirChan       chan Dir
 	gatherFilesWg *sync.WaitGroup
 	fileWg        *sync.WaitGroup
 	stats         map[string]Stats
+	sorted        []Stats
 }
 
 // Dir is just the relative directory name
@@ -37,11 +39,14 @@ type File struct {
 
 // Stats keeps track of extension statistics
 type Stats struct {
-	ext    string
-	count  int
-	bytes  int64
-	oldest time.Time
-	newest time.Time
+	ext       string
+	firstFile string
+	count     int
+	bytes     int64
+	smallest  int64
+	largest   int64
+	oldest    time.Time
+	newest    time.Time
 }
 
 var (
@@ -75,7 +80,18 @@ func (dx *DirX) Go(path string) error {
 	close(dx.dirChan)
 
 	dx.gatherFilesWg.Wait()
+	dx.sorted = dx.toArray()
 	return nil
+}
+
+// Sort sorts the values with the given sort criteria.
+func (dx *DirX) Sort() {
+	sort.Slice(dx.sorted, func(i, j int) bool {
+		if dx.sorted[i].count == dx.sorted[j].count {
+			return strings.ToLower(dx.sorted[i].ext) < strings.ToLower(dx.sorted[j].ext)
+		}
+		return dx.sorted[i].count > dx.sorted[j].count
+	})
 }
 
 // gatherFiles needs to run in a goroutine and gathers statistics
@@ -92,13 +108,23 @@ func (dx *DirX) gatherFiles(fileChan chan File) {
 		stats, ok := dx.stats[ext]
 		if !ok {
 			stats = Stats{
-				ext:    ext,
-				oldest: f.time,
-				newest: f.time,
+				ext:      ext,
+				oldest:   f.time,
+				newest:   f.time,
+				smallest: 2E6,
 			}
 		}
 		stats.count++
+		if stats.count == 1 {
+			stats.firstFile = f.filename
+		}
 		stats.bytes += f.size
+		if f.size < stats.smallest {
+			stats.smallest = f.size
+		}
+		if f.size > stats.largest {
+			stats.largest = f.size
+		}
 		if f.time.After(stats.oldest) {
 			stats.oldest = f.time
 		}
@@ -170,17 +196,4 @@ func (dx *DirX) toArray() []Stats {
 		ret = append(ret, stats)
 	}
 	return ret
-}
-
-func (dx *DirX) Print() {
-	sorted := dx.toArray()
-	sort.Slice(sorted, func(i, j int) bool {
-		if sorted[i].count == sorted[j].count {
-			return sorted[i].ext < sorted[j].ext
-		}
-		return sorted[i].count > sorted[j].count
-	})
-	for _, stats := range sorted {
-		fmt.Printf("%3d *.%s\n", stats.count, stats.ext)
-	}
 }
