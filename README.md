@@ -1,3 +1,6 @@
+![Go Test](https://github.com/scottkirkwood/dirx/actions/workflows/go.yml/badge.svg)
+
+
 # dirx
 Directory by Extension
 
