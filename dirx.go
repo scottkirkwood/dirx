@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"path"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -16,6 +17,8 @@ type DirX struct {
 	SkipHidden     bool
 	FollowLinks    bool
 	ShowSingleName bool
+	MaxDepth       int
+	Recurse        bool
 
 	fileChan      chan File
 	dirChan       chan Dir
@@ -111,7 +114,7 @@ func (dx *DirX) gatherFiles(fileChan chan File) {
 				ext:      ext,
 				oldest:   f.time,
 				newest:   f.time,
-				smallest: 2E6,
+				smallest: 2e6,
 			}
 		}
 		stats.count++
@@ -156,11 +159,10 @@ func (dx *DirX) oneDir(dir Dir) {
 	}
 	// Emit the folders
 	for _, f := range files {
-		name := f.Name()
-		if f.IsDir() && dx.addFolder(name) {
-			dirName := path.Join(dir.dirname, name)
+		d := Dir{dirname: path.Join(dir.dirname, f.Name())}
+		if f.IsDir() && dx.addFolder(d) {
 			dx.fileWg.Add(1)
-			dx.dirChan <- Dir{dirname: dirName}
+			dx.dirChan <- d
 		}
 	}
 	// Emit the files
@@ -176,18 +178,40 @@ func (dx *DirX) oneDir(dir Dir) {
 	}
 }
 
-func (dx *DirX) addFolder(name string) bool {
+func (dx *DirX) depthIsOk(dir Dir) bool {
+	if dx.Recurse && dx.MaxDepth <= 0 {
+		return true
+	}
+    depth := dir.depth()
+	fmt.Printf("Recurse %v, Depth %d < %d\n", dx.Recurse, depth, dx.MaxDepth)
+	if !dx.Recurse && depth > 0 {
+		return false
+	}
+	return dir.depth() < dx.MaxDepth
+}
+
+func (dx *DirX) filenameIsOk(fname string) bool {
 	if !dx.SkipHidden {
 		return true
 	}
-	return !hiddenRx.MatchString(name)
+	return !hiddenRx.MatchString(fname)
+}
+
+func (dx *DirX) addFolder(dir Dir) bool {
+	if !dx.depthIsOk(dir) {
+		return false
+	}
+	if !dx.filenameIsOk(dir.baseName()) {
+		return false
+	}
+	return true
 }
 
 func (dx *DirX) addFile(name string) bool {
-	if !dx.SkipHidden {
-		return true
+	if !dx.filenameIsOk(name) {
+		return false
 	}
-	return !hiddenRx.MatchString(name)
+	return true
 }
 
 func (dx *DirX) toArray() []Stats {
@@ -196,4 +220,15 @@ func (dx *DirX) toArray() []Stats {
 		ret = append(ret, stats)
 	}
 	return ret
+}
+
+func (d Dir) depth() int {
+	if d.dirname == "." {
+		return 0
+	}
+	return 1+strings.Count(d.dirname, "/")
+}
+
+func (d Dir) baseName() string {
+	return filepath.Base(d.dirname)
 }

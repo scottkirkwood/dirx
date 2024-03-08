@@ -6,6 +6,12 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"golang.org/x/text/message"
+)
+
+var (
+	printer = message.NewPrinter(message.MatchLanguage("en"))
 )
 
 type displayRows struct {
@@ -54,19 +60,19 @@ func (dx *DirX) Print() {
 }
 
 func (dx *DirX) formatCount(stats Stats) string {
-	return strconv.Itoa(stats.count)
+	return printer.Sprint(stats.count)
 }
 
 func (dx *DirX) formatSmallest(stats Stats) string {
-	return strconv.FormatInt(stats.smallest, 10)
+	return printer.Sprint(stats.smallest)
 }
 
 func (dx *DirX) formatLargest(stats Stats) string {
-	return strconv.FormatInt(stats.largest, 10)
+	return printer.Sprint(stats.largest)
 }
 
 func (dx *DirX) formatSize(stats Stats) string {
-	return strconv.FormatInt(stats.bytes, 10)
+	return printer.Sprint(stats.bytes)
 }
 
 func (dx *DirX) formatExt(stats Stats) string {
