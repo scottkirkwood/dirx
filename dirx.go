@@ -2,7 +2,7 @@ package dirx
 
 import (
 	"fmt"
-	"io/ioutil"
+	"os"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -19,13 +19,16 @@ type DirX struct {
 	ShowSingleName bool
 	MaxDepth       int
 	Recurse        bool
+	SortBySize     bool
+	NoCommas       bool
 
 	fileChan      chan File
 	dirChan       chan Dir
 	gatherFilesWg *sync.WaitGroup
 	fileWg        *sync.WaitGroup
-	stats         map[string]Stats
-	sorted        []Stats
+	stats         map[string]*Stats
+	sorted        []*Stats
+	extensionMap  map[string]string
 }
 
 // Dir is just the relative directory name
@@ -64,12 +67,12 @@ func NewDirX() *DirX {
 		dirChan:       make(chan Dir, 0),
 		gatherFilesWg: &sync.WaitGroup{},
 		fileWg:        &sync.WaitGroup{},
-		stats:         make(map[string]Stats),
+		stats:         make(map[string]*Stats),
 	}
 }
 
 // Go starts the operation from a certain path
-func (dx *DirX) Go(path string) error {
+func (dx *DirX) Go(path string) (err error) {
 	dx.gatherFilesWg.Add(1)
 	go dx.gatherFiles(dx.fileChan)
 
@@ -83,18 +86,183 @@ func (dx *DirX) Go(path string) error {
 	close(dx.dirChan)
 
 	dx.gatherFilesWg.Wait()
+	dx.extensionMap, err = dx.makeExtensionMap()
+	if err != nil {
+		return err
+	}
+	dx.stats = dx.combineSimilar()
 	dx.sorted = dx.toArray()
 	return nil
+}
+
+func (dx *DirX) toArray() []*Stats {
+	ret := make([]*Stats, 0, len(dx.stats))
+	for _, stats := range dx.stats {
+		ret = append(ret, stats)
+	}
+	return ret
+}
+
+// combine similar, combines extensions like .jpg and .jpeg, .JPG
+func (dx *DirX) combineSimilar() map[string]*Stats {
+	exts := make(map[string][]string, len(dx.stats))
+	for key := range dx.stats {
+		toKey := dx.mapExt(key)
+		exts[toKey] = append(exts[toKey], key)
+	}
+
+	m := make(map[string]*Stats, len(dx.stats))
+	for key, stat := range dx.stats {
+		toKey := dx.mapExt(key)
+		newKey := strings.Join(exts[toKey], ", ")
+		m[newKey] = m[newKey].combineStats(stat) // TODO
+	}
+	return m
+}
+
+// fileTypes take from silver search (hg)
+var fileTypes = map[string][]string{
+	"as":       {"as", "mxml"}, // actionscript
+	"ada":      {"ada", "adb", "ads"},
+	"asciidoc": {"adoc", "ad", "asc", "asciidoc"},
+	"apl":      {"apl"},
+	"asm":      {"asm", "s"},
+	"asp":      {"asp", "aspx", "asax", "ashx", "ascx", "asmx"},
+	"bat":      {"bat", "cmd"},                       // batch
+	"bb":       {"bb", "bbappend", "bbclass", "inc"}, // bitbake
+	"c":        {"c", "h", "xs"},
+	"cfc":      {"cfc", "cfm", "cfml"},                 // cfmx
+	"clj":      {"clj", "cljs", "cljc", "cljx", "edn"}, // clojure
+	"coffee":   {"coffee", "cjsx"},
+	"coq":      {"coq", "g"},
+	"cpp":      {"cpp", "cc", "C", "cxx", "m", "hpp", "hh", "H", "hxx", "tpp"},
+	"cr":       {"cr", "ecr"},                                                                                  // crystal
+	"pyx":      {"pyx", "pxd", "pxi"},                                                                          // cython
+	"pas":      {"pas", "int", "dfm", "nfm", "dof", "dpk", "dpr", "dproj", "groupproj", "bdsgroup", "bdsproj"}, // delphi
+	"d":        {"d", "di"},                                                                                    // dlang
+	"dot":      {"dot", "gv"},
+	"dts":      {"dts", "dtsi"},
+	"ebuild":   {"ebuild", "eclass"},
+	"ex":       {"ex", "eex", "exs"},                                                      // elixir
+	"erl":      {"erl", "hrl"},                                                            // erlang
+	"f":        {"f", "F", "f77", "f90", "F90", "f95", "f03", "for", "ftn", "fpp", "FPP"}, // fortran
+	"fs":       {"fs", "fsi", "fsx"},                                                      // fsharp
+	"po":       {"po", "pot", "mo"},                                                       // gettext
+	"vert":     {"vert", "tesc", "tese", "geom", "frag", "comp"},                          // glsl
+	"groovy":   {"groovy", "gtmpl", "gpp", "grunit", "gradle"},
+	"hs":       {"hs", "hsig", "lhs"}, // haskell
+	"html":     {"htm", "html", "shtml", "xhtml"},
+	"idr":      {"idr", "ipkg", "lidr"}, // idris
+	"java":     {"java", "properties"},
+	"js":       {"es6", "js", "jsx", "vue"},
+	"json":     {"json"},
+	"jsp":      {"jsp", "jspx", "jhtm", "jhtml", "jspf", "tag", "tagf"},
+	"lisp":     {"lisp", "lsp"},
+	"mak":      {"Makefiles", "Makefile", "mk", "mak"},
+	"markdown": {"markdown", "mdown", "mdwn", "mkdn", "mkd", "md"},
+	"mas":      {"mas", "mhtml", "mpl", "mtxt"},           // mason
+	"asa":      {"asa", "rsa"},                            // naccess
+	"ml":       {"ml", "mli", "mll", "mly"},               // ocaml
+	"pir":      {"pir", "pasm", "pmc", "ops", "pg", "tg"}, // parrot
+	"pl":       {"pl", "pm", "pm6", "t"},                  // perl
+	"php":      {"php", "phpt", "php3", "php4", "php5", "phtml"},
+	"pike":     {"pike", "pmod"},
+	"pt":       {"pt", "cpt", "metadata", "cpy", "zcml"}, // plone
+	"r":        {"r", "R", "Rmd", "Rnw", "Rtex", "Rrst"},
+	"rb":       {"rb", "rhtml", "rjs", "rxml", "erb", "rake", "spec"}, // ruby
+	"sass":     {"sass", "scss"},
+	"sh":       {"sh", "bash", "csh", "tcsh", "ksh", "zsh", "fish"}, // shell
+	"sml":      {"sml", "fun", "mlb", "sig"},
+	"ado":      {"do", "ado"}, // stata
+	"tcl":      {"tcl", "itcl", "itk"},
+	"tf":       {"tf", "tfvars"}, // terraform
+	"tex":      {"tex", "sty"},
+	"tt":       {"tt", "tt2", "ttml"},
+	"ts":       {"ts", "tsx"},
+	"vala":     {"vala", "vapi"},
+	"vb":       {"bas", "frm", "vb", "resx"},
+	"vm":       {"vm", "vtl", "vsl"},     // velocity
+	"v":        {"v", "vh", "sv", "svh"}, // verilog
+	"vhdl":     {"vhd", "vhdl"},
+	"wxi":      {"wxi", "wxs"}, // wix
+	"xml":      {"xml", "dtd", "xsl", "xslt", "xsd", "ent", "tld", "plist", "wsdl"},
+	"yaml":     {"yaml", "yml"},
+	"zeek":     {"zeek", "bro", "bif"},
+	// Images (wiki)
+	"jpeg": {"jpg", "jpeg", "jpe", "jif", "jfif", "jfi"},
+	"tiff": {"tiff", "tif"},
+	"raw":  {"raw", "arw", "cr2", "nrw", "k25"},
+	"bmp":  {"bmp", "dib"},
+	"heif": {"heif", "heic"},
+	"indd": {"ind", "indd", "indt"},
+	"jp2":  {"jp2", "j2k", "jpf", "jpx", "jpm", "mj2"},
+	"svg":  {"svg", "svgz"},
+	// Video (Internet)
+	"ogg":  {"ogv", "ogg"},
+	"mts":  {"mts", "m2ts"},
+	"mov":  {"mov", "qt"},
+	"mp4":  {"mp4", "m4p", "m4v"},
+	"mpeg": {"mpg", "mp2", "mpeg", "mpe", "mpv"},
+	"flv":  {"flv", "f4v", "f4p", "f4a", "f4b"}, // flash
+}
+
+// makeExtensionMap makes a map of multiple extensions to one extension
+func (dx *DirX) makeExtensionMap() (map[string]string, error) {
+	m := map[string]string{}
+	for k, types := range fileTypes {
+		found := false
+		for _, v := range types {
+			if v == k {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return m, fmt.Errorf("did not find key in values %q {%v}", k, types)
+		}
+		for _, v := range types {
+			x, ok := m[v]
+			if ok {
+				return m, fmt.Errorf("found duplicate value %q to key %q at %q: {%v}", v, x, k, types)
+			}
+			m[v] = k
+		}
+	}
+	return m, nil
+}
+
+func (dx *DirX) mapExt(ext string) string {
+	to, ok := dx.extensionMap[ext]
+	if ok {
+		return to
+	}
+	ext = strings.ToLower(ext)
+	to, ok = dx.extensionMap[ext]
+	if ok {
+		return to
+	}
+	return ext
 }
 
 // Sort sorts the values with the given sort criteria.
 func (dx *DirX) Sort() {
 	sort.Slice(dx.sorted, func(i, j int) bool {
-		if dx.sorted[i].count == dx.sorted[j].count {
-			return strings.ToLower(dx.sorted[i].ext) < strings.ToLower(dx.sorted[j].ext)
-		}
-		return dx.sorted[i].count > dx.sorted[j].count
+		return dx.Less(dx.sorted[i], dx.sorted[j])
 	})
+}
+
+// Less returns true if a is less than b
+func (dx *DirX) Less(a, b *Stats) bool {
+	if dx.SortBySize {
+		if a.bytes == b.bytes {
+			return strings.ToLower(a.ext) < strings.ToLower(b.ext)
+		}
+		return a.bytes > b.bytes
+	}
+	if a.count == b.count {
+		return strings.ToLower(a.ext) < strings.ToLower(b.ext)
+	}
+	return a.count > b.count
 }
 
 // gatherFiles needs to run in a goroutine and gathers statistics
@@ -110,7 +278,7 @@ func (dx *DirX) gatherFiles(fileChan chan File) {
 		ext := parts[1]
 		stats, ok := dx.stats[ext]
 		if !ok {
-			stats = Stats{
+			stats = &Stats{
 				ext:      ext,
 				oldest:   f.time,
 				newest:   f.time,
@@ -131,11 +299,42 @@ func (dx *DirX) gatherFiles(fileChan chan File) {
 		if f.time.After(stats.oldest) {
 			stats.oldest = f.time
 		}
-		if f.time.Before(stats.oldest) {
+		if f.time.Before(stats.newest) {
 			stats.newest = f.time
 		}
 		dx.stats[ext] = stats
 	}
+}
+
+func (s *Stats) combineStats(stat *Stats) *Stats {
+	if s == nil {
+		return &Stats{
+			ext:       stat.ext,
+			firstFile: stat.firstFile,
+			count:     stat.count,
+			bytes:     stat.bytes,
+			smallest:  stat.smallest,
+			largest:   stat.largest,
+			oldest:    stat.oldest,
+			newest:    stat.newest,
+		}
+	}
+	s.count += stat.count
+	s.bytes += stat.bytes
+	s.ext = s.ext + ", " + stat.ext
+	if s.smallest < stat.smallest {
+		s.smallest = stat.smallest
+	}
+	if s.largest > stat.largest {
+		s.largest = stat.largest
+	}
+	if s.oldest.After(stat.oldest) {
+		s.oldest = stat.oldest
+	}
+	if s.newest.Before(stat.newest) {
+		s.newest = stat.newest
+	}
+	return s
 }
 
 // recurseDir performs a breadth first search over the folders by using
@@ -150,7 +349,7 @@ func (dx *DirX) recurseDir() {
 func (dx *DirX) oneDir(dir Dir) {
 	defer dx.fileWg.Done()
 
-	files, err := ioutil.ReadDir(dir.dirname)
+	files, err := os.ReadDir(dir.dirname)
 	if err != nil {
 		if !strings.Contains(err.Error(), "permission denied") {
 			fmt.Printf("Error: %v\n", err)
@@ -169,10 +368,11 @@ func (dx *DirX) oneDir(dir Dir) {
 	for _, f := range files {
 		name := f.Name()
 		if !f.IsDir() && dx.addFile(name) {
+			i, _ := f.Info()
 			dx.fileChan <- File{
 				filename: name,
-				size:     f.Size(),
-				time:     f.ModTime(),
+				size:     i.Size(),
+				time:     i.ModTime(),
 			}
 		}
 	}
@@ -182,8 +382,7 @@ func (dx *DirX) depthIsOk(dir Dir) bool {
 	if dx.Recurse && dx.MaxDepth <= 0 {
 		return true
 	}
-    depth := dir.depth()
-	fmt.Printf("Recurse %v, Depth %d < %d\n", dx.Recurse, depth, dx.MaxDepth)
+	depth := dir.depth()
 	if !dx.Recurse && depth > 0 {
 		return false
 	}
@@ -214,19 +413,11 @@ func (dx *DirX) addFile(name string) bool {
 	return true
 }
 
-func (dx *DirX) toArray() []Stats {
-	ret := make([]Stats, 0, len(dx.stats))
-	for _, stats := range dx.stats {
-		ret = append(ret, stats)
-	}
-	return ret
-}
-
 func (d Dir) depth() int {
 	if d.dirname == "." {
 		return 0
 	}
-	return 1+strings.Count(d.dirname, "/")
+	return 1 + strings.Count(d.dirname, "/")
 }
 
 func (d Dir) baseName() string {

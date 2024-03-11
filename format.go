@@ -10,13 +10,12 @@ import (
 	"golang.org/x/text/message"
 )
 
-var (
-	printer = message.NewPrinter(message.MatchLanguage("en"))
-)
+var printer = message.NewPrinter(message.MatchLanguage("en"))
 
 type displayRows struct {
-	rows      [][]string
-	colWidths []int
+	rows       [][]string
+	colWidths  []int
+	rightAlign []bool
 }
 
 func (r *displayRows) addRow(cols ...string) {
@@ -36,7 +35,11 @@ func (r *displayRows) addRow(cols ...string) {
 func (r *displayRows) getRow(index int) string {
 	cols := make([]string, len(r.rows[index]))
 	for i, width := range r.colWidths {
-		cols[i] = fmt.Sprintf("%-*s", width, r.rows[index][i])
+		if r.rightAlign[i] {
+			cols[i] = fmt.Sprintf("%*s", width, r.rows[index][i])
+		} else {
+			cols[i] = fmt.Sprintf("%-*s", width, r.rows[index][i])
+		}
 	}
 	return strings.Join(cols, " ")
 }
@@ -46,40 +49,61 @@ func (r *displayRows) Len() int {
 	return len(r.rows)
 }
 
+// Len is the standard length interface
+func (r *displayRows) RightAlign(rightAligns ...bool) {
+	r.rightAlign = make([]bool, len(rightAligns))
+	for i, a := range rightAligns {
+		r.rightAlign[i] = a
+	}
+}
+
 // Print prints out the values
 func (dx *DirX) Print() {
 	width, _ := getColWidth()
 	_ = width
 	rows := displayRows{}
+	rows.RightAlign(false, true, true)
 	for _, stats := range dx.sorted {
-		rows.addRow(dx.formatCount(stats), dx.formatExt(stats), dx.formatSize(stats))
+		rows.addRow(dx.formatExt(stats), dx.formatCount(stats), dx.formatSize(stats))
 	}
 	for i := 0; i < rows.Len(); i++ {
 		fmt.Println(rows.getRow(i))
 	}
 }
 
-func (dx *DirX) formatCount(stats Stats) string {
+func (dx *DirX) formatCount(stats *Stats) string {
+	if dx.NoCommas {
+		return fmt.Sprintf("%d", stats.count)
+	}
 	return printer.Sprint(stats.count)
 }
 
-func (dx *DirX) formatSmallest(stats Stats) string {
+func (dx *DirX) formatSmallest(stats *Stats) string {
+	if dx.NoCommas {
+		return fmt.Sprintf("%d", stats.count)
+	}
 	return printer.Sprint(stats.smallest)
 }
 
-func (dx *DirX) formatLargest(stats Stats) string {
+func (dx *DirX) formatLargest(stats *Stats) string {
+	if dx.NoCommas {
+		return fmt.Sprintf("%d", stats.count)
+	}
 	return printer.Sprint(stats.largest)
 }
 
-func (dx *DirX) formatSize(stats Stats) string {
+func (dx *DirX) formatSize(stats *Stats) string {
+	if dx.NoCommas {
+		return fmt.Sprintf("%d", stats.count)
+	}
 	return printer.Sprint(stats.bytes)
 }
 
-func (dx *DirX) formatExt(stats Stats) string {
+func (dx *DirX) formatExt(stats *Stats) string {
 	if dx.ShowSingleName && stats.count == 1 {
 		return stats.firstFile
 	}
-	return "*." + stats.ext
+	return "." + stats.ext
 }
 
 func getColWidth() (int, error) {
