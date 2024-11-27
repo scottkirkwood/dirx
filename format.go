@@ -60,15 +60,20 @@ func (r *displayRows) RightAlign(rightAligns ...bool) {
 // Print prints out the values
 func (dx *DirX) Print() {
 	width, _ := getColWidth()
-	_ = width
+	_ = width // TODO use the terminal width
+	rows := dx.formatRows()
+	for i := 0; i < rows.Len(); i++ {
+		fmt.Println(rows.getRow(i))
+	}
+}
+
+func (dx *DirX) formatRows() displayRows {
 	rows := displayRows{}
 	rows.RightAlign(false, true, true)
 	for _, stats := range dx.sorted {
 		rows.addRow(dx.formatExt(stats), dx.formatCount(stats), dx.formatSize(stats))
 	}
-	for i := 0; i < rows.Len(); i++ {
-		fmt.Println(rows.getRow(i))
-	}
+	return rows
 }
 
 func (dx *DirX) formatCount(stats *Stats) string {
@@ -80,21 +85,21 @@ func (dx *DirX) formatCount(stats *Stats) string {
 
 func (dx *DirX) formatSmallest(stats *Stats) string {
 	if dx.NoCommas {
-		return fmt.Sprintf("%d", stats.count)
+		return fmt.Sprintf("%d", stats.smallest)
 	}
 	return printer.Sprint(stats.smallest)
 }
 
 func (dx *DirX) formatLargest(stats *Stats) string {
 	if dx.NoCommas {
-		return fmt.Sprintf("%d", stats.count)
+		return fmt.Sprintf("%d", stats.largest)
 	}
 	return printer.Sprint(stats.largest)
 }
 
 func (dx *DirX) formatSize(stats *Stats) string {
 	if dx.NoCommas {
-		return fmt.Sprintf("%d", stats.count)
+		return fmt.Sprintf("%d", stats.bytes)
 	}
 	return printer.Sprint(stats.bytes)
 }
@@ -114,6 +119,5 @@ func getColWidth() (int, error) {
 		return 0, err
 	}
 	cols := strings.Split(strings.TrimSpace(string(out)), " ")
-	val, err := strconv.Atoi(cols[1])
-	return val, nil
+	return strconv.Atoi(cols[1])
 }

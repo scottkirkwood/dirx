@@ -63,8 +63,8 @@ var (
 // NewDirX creates a new empty DirX object
 func NewDirX() *DirX {
 	return &DirX{
-		fileChan:      make(chan File, 0),
-		dirChan:       make(chan Dir, 0),
+		fileChan:      make(chan File),
+		dirChan:       make(chan Dir),
 		gatherFilesWg: &sync.WaitGroup{},
 		fileWg:        &sync.WaitGroup{},
 		stats:         make(map[string]*Stats),
@@ -407,10 +407,7 @@ func (dx *DirX) addFolder(dir Dir) bool {
 }
 
 func (dx *DirX) addFile(name string) bool {
-	if !dx.filenameIsOk(name) {
-		return false
-	}
-	return true
+	return dx.filenameIsOk(name)
 }
 
 func (d Dir) depth() int {
