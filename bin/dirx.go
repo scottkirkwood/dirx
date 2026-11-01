@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"os"
@@ -41,8 +42,23 @@ func main() {
 		folder = flag.Arg(0)
 	}
 
-	if err := dirx.Go(folder); err != nil {
-		fmt.Printf("Error: %v\n", err)
+	fileInfo, err := os.Stdin.Stat()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error getting file info: %v\n", err)
+		return
+	}
+	// Check if the input mode is a character device (terminal)
+	if err != nil || fileInfo.Mode()&os.ModeCharDevice != 0 {
+		// Normal handling
+		if err := dirx.Go(folder); err != nil {
+			fmt.Printf("Error: %v\n", err)
+		}
+	} else {
+		// Stdin is piped or redirected from a file
+		scanner := bufio.NewScanner(os.Stdin)
+		if err := dirx.Scan(scanner); err != nil {
+			fmt.Printf("Error: %v\n", err)
+		}
 	}
 	dirx.Sort()
 	dirx.Print()

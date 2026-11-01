@@ -1,6 +1,7 @@
 package dirx
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path"
@@ -69,6 +70,26 @@ func NewDirX() *DirX {
 		fileWg:        &sync.WaitGroup{},
 		stats:         make(map[string]*Stats),
 	}
+}
+
+// Scan gets filenames from a scanner
+func (dx *DirX) Scan(scanner *bufio.Scanner) (err error) {
+	close(dx.dirChan)
+	dx.gatherFilesWg.Add(1)
+	go dx.gatherFiles(dx.fileChan)
+
+	for scanner.Scan() {
+		dx.fileChan <- File{filename: scanner.Text()}
+	}
+	close(dx.fileChan)
+
+	dx.extensionMap, err = dx.makeExtensionMap()
+	if err != nil {
+		return err
+	}
+	dx.stats = dx.combineSimilar()
+	dx.sorted = dx.toArray()
+	return nil
 }
 
 // Go starts the operation from a certain path
